@@ -1,0 +1,8 @@
+# Optional explicit overlay (prod file already targets network revasyst).
+# Kept for symmetry with CRMFlow/Postbuilder deploy.sh detection.
+services: {}
+
+networks:
+  web:
+    external: true
+    name: revasyst

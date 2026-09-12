@@ -1,0 +1,66 @@
+# Production deployment behind shared Traefik (no host TLS on nginx).
+# Base file keeps dedicated pgvector Postgres. Pair with docker-compose.revasyst.yml
+# on the new VPS (network `revasyst`) or point `web` at legacy `root_default`.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.revasyst.yml up -d --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ekp
+      POSTGRES_DB: ekp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ekp -d ekp"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    shm_size: 128mb
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      EKP_CONFIG: /srv/config.yaml
+    volumes:
+      - ./config.yaml:/srv/config.yaml:ro
+      - model_cache:/root/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 2g
+    restart: unless-stopped
+
+  nginx:
+    build: ./frontend
+    volumes:
+      - ./nginx/nginx.plain.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    networks:
+      - default
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=revasyst"
+      - "traefik.http.routers.ekp.entrypoints=websecure"
+      - "traefik.http.routers.ekp.rule=Host(`ekp.revasyst.com`)"
+      - "traefik.http.routers.ekp.tls.certresolver=le"
+      - "traefik.http.routers.ekp-http.entrypoints=web"
+      - "traefik.http.routers.ekp-http.rule=Host(`ekp.revasyst.com`)"
+      - "traefik.http.services.ekp.loadbalancer.server.port=80"
+    restart: unless-stopped
+
+networks:
+  default:
+  web:
+    external: true
+    name: revasyst
+
+volumes:
+  pgdata:
+  model_cache:
