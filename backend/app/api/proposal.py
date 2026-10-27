@@ -7,9 +7,10 @@ import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ..core.parsing import kind_of
-from ..services.links import link_info
+from ..services.links import MAX_WINDOW_HOURS, link_info, log_access_event
 from .deps import bearer_or_query_token, require_link
 
 router = APIRouter()
@@ -25,7 +26,50 @@ async def proposal_info(request: Request):
     # allow_inactive: revoked/expired links still return their metadata so the
     # UI can show the right blocked screen (enforcement happens on actions).
     link = await require_link(request, allow_inactive=True)
-    return link_info(link, bearer_or_query_token(request))
+    info = link_info(link, bearer_or_query_token(request))
+    async with request.app.state.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM extension_request "
+            "WHERE link_id = %s AND status = 'pending' LIMIT 1",
+            (link["id"],),
+        )
+        info["extensionRequested"] = await cur.fetchone() is not None
+    return info
+
+
+class ExtensionRequestBody(BaseModel):
+    hours: int = Field(ge=1, le=MAX_WINDOW_HOURS)
+    note: str = Field(default="", max_length=500)
+
+
+@router.post("/api/proposal/extension-request")
+async def request_extension(body: ExtensionRequestBody, request: Request):
+    """Asked for from the blocked screen, granted (or not) in the admin portal.
+
+    allow_inactive: the whole point is that the caller is locked out, so an
+    expired or revoked link must still be able to send this.
+    """
+    link = await require_link(request, allow_inactive=True)
+    async with request.app.state.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM extension_request "
+            "WHERE link_id = %s AND status = 'pending' LIMIT 1",
+            (link["id"],),
+        )
+        if await cur.fetchone() is not None:
+            return {"status": "pending"}  # one open request per link is enough
+        await conn.execute(
+            "INSERT INTO extension_request (link_id, hours, note) VALUES (%s, %s, %s)",
+            (link["id"], body.hours, body.note.strip()),
+        )
+        await log_access_event(
+            conn,
+            link["id"],
+            "requested",
+            actor="client",
+            note=body.note.strip() or f"{body.hours} h",
+        )
+    return {"status": "pending"}
 
 
 @router.post("/api/warm")

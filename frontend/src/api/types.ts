@@ -17,6 +17,8 @@ export interface LinkInfo {
   maxQueries: number
   usedQueries: number
   revoked: boolean
+  /** true once the client has asked for the window to be reopened */
+  extensionRequested: boolean
 }
 
 export type Corpus = 'user' | 'default'
@@ -125,6 +127,12 @@ export interface SourceDoc {
 
 // ---------- Admin ----------
 
+export interface PendingExtension {
+  id: string
+  hours: number
+  note: string
+}
+
 export interface ProposalLink {
   id: string
   label: string
@@ -136,6 +144,9 @@ export interface ProposalLink {
   maxQueries: number
   usedQueries: number
   revoked: boolean
+  documentCount: number
+  lastActivityAt: string | null
+  pendingExtension: PendingExtension | null
 }
 
 export interface CreateLinkRequest {
@@ -145,28 +156,146 @@ export interface CreateLinkRequest {
   expiresInHours: number
 }
 
-export interface ActivityEvent {
-  id: string
+/**
+ * Push a link's expiry out — `hours` from `anchor`, or straight to `expiresAt`.
+ * The token never changes, so a URL already shared with a client keeps working.
+ */
+export interface ExtendLinkRequest {
+  hours?: number
+  expiresAt?: string
+  anchor?: 'now' | 'current'
+  topUpQueries?: number
+  note?: string
+  requestId?: string
+}
+
+/** The longest window the server will grant, counted from now. */
+export const MAX_WINDOW_HOURS = 8760
+
+export interface AccessEvent {
+  kind: 'minted' | 'extended' | 'revoked' | 'reinstated' | 'requested' | 'declined'
+  actor: 'admin' | 'client'
+  note: string
+  expiresBefore: string | null
+  expiresAfter: string | null
   ts: string
+}
+
+/** One row of the admin question list / a link's conversation. */
+export interface QuerySummary {
+  queryId: string
+  ts: string
+  linkId: string | null
   linkLabel: string
-  kind: 'ingestion' | 'query'
-  detail: string // filename or question text
-  latencyMs: number
+  corpus: Corpus
+  question: string
+  answer: string
+  grounded: boolean
+  totalMs: number
   tokens: number
   estCostUsd: number
+  model: string
   feedback: Feedback | null
   feedbackReason: string | null
 }
 
-export interface DashboardData {
+export interface RetrievedChunk {
+  chunkId: number
+  docId: string
+  filename: string
+  ordinal: number
+  docChunks: number
+  page: number | null
+  charStart: number
+  charEnd: number
+  tokenCount: number
+  snippet: string
+  rank: number
+  score: number | null
+  /** whether this chunk cleared the floor and reached the model */
+  used: boolean
+}
+
+export interface QueryDetail extends QuerySummary {
+  retrievalMs: number
+  ttftMs: number
+  inputTokens: number
+  outputTokens: number
+  similarityFloor: number
+  retrievedCount: number
+  keptCount: number
+  askedTimes: number
+  chunks: RetrievedChunk[]
+}
+
+export interface LinkDocument {
+  docId: string
+  filename: string
+  sizeBytes: number
+  pageCount: number | null
+  chunkCount: number
+  totalMs: number
+  status: string
+  ingestedAt: string
+}
+
+export interface LinkDetail {
+  link: ProposalLink
   totals: {
-    activeLinks: number
-    ingestions: number
     queries: number
+    grounded: number
     tokens: number
     estCostUsd: number
+    p50Ms: number
+    p90Ms: number
+  }
+  documents: LinkDocument[]
+  conversation: QuerySummary[]
+  accessEvents: AccessEvent[]
+}
+
+export interface DashboardData {
+  days: number
+  totals: {
+    activeLinks: number
+    totalLinks: number
+    expiringSoon: number
+    pendingRequests: number
+    queries: number
+    grounded: number
+    refused: number
+    groundedPct: number
+    ingestions: number
+    chunks: number
+    tokens: number
+    estCostUsd: number
+    p50Ms: number
+    p90Ms: number
+    p99Ms: number
     likes: number
     dislikes: number
   }
-  events: ActivityEvent[]
+  series: { day: string; queries: number; refused: number }[]
+  refusals: {
+    queryId: string
+    question: string
+    linkLabel: string
+    ts: string
+    totalMs: number
+  }[]
+  complaints: {
+    queryId: string
+    question: string
+    linkLabel: string
+    reason: string | null
+    ts: string
+  }[]
+}
+
+export interface QueryListFilters {
+  linkId?: string
+  days?: number
+  grounded?: boolean
+  feedback?: Feedback
+  q?: string
 }

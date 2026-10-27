@@ -7,11 +7,16 @@ import type {
   Corpus,
   CreateLinkRequest,
   DashboardData,
+  ExtendLinkRequest,
   Feedback,
   IngestEvent,
+  LinkDetail,
   LinkInfo,
   ProposalLink,
+  QueryDetail,
   QueryEvent,
+  QueryListFilters,
+  QuerySummary,
   SourceDoc,
 } from './types'
 
@@ -75,6 +80,22 @@ async function ssePost(
 /** GET /api/proposal/info */
 export async function getLinkInfo(token: string): Promise<LinkInfo> {
   return http<LinkInfo>(`/api/proposal/info?t=${encodeURIComponent(token)}`)
+}
+
+/** POST /api/proposal/extension-request — sent from the blocked screen */
+export async function requestExtension(
+  token: string,
+  hours: number,
+  note?: string,
+): Promise<void> {
+  await http('/api/proposal/extension-request', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ hours, note }),
+  })
 }
 
 /** POST /api/warm — fire on link open; heats embedder + DB pool + LLM client */
@@ -207,7 +228,61 @@ export async function adminRevokeLink(id: string): Promise<void> {
   await adminHttp(`/api/admin/links/${encodeURIComponent(id)}/revoke`, { method: 'POST' })
 }
 
+/** POST /api/admin/links/:id/reinstate */
+export async function adminReinstateLink(id: string): Promise<ProposalLink> {
+  return adminHttp<ProposalLink>(
+    `/api/admin/links/${encodeURIComponent(id)}/reinstate`,
+    { method: 'POST' },
+  )
+}
+
+/** POST /api/admin/links/:id/extend — same token, longer window */
+export async function adminExtendLink(
+  id: string,
+  req: ExtendLinkRequest,
+): Promise<ProposalLink> {
+  return adminHttp<ProposalLink>(`/api/admin/links/${encodeURIComponent(id)}/extend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+}
+
+/** POST /api/admin/requests/:id/decline */
+export async function adminDeclineRequest(id: string): Promise<void> {
+  await adminHttp(`/api/admin/requests/${encodeURIComponent(id)}/decline`, {
+    method: 'POST',
+  })
+}
+
+/** GET /api/admin/links/:id */
+export async function adminLinkDetail(id: string): Promise<LinkDetail> {
+  return adminHttp<LinkDetail>(`/api/admin/links/${encodeURIComponent(id)}`)
+}
+
+/** GET /api/admin/queries */
+export async function adminListQueries(
+  filters: QueryListFilters = {},
+): Promise<QuerySummary[]> {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== '') params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return adminHttp<QuerySummary[]>(`/api/admin/queries${qs ? `?${qs}` : ''}`)
+}
+
+/** GET /api/admin/queries/:id — the retrieval behind one answer */
+export async function adminQueryDetail(id: string): Promise<QueryDetail> {
+  return adminHttp<QueryDetail>(`/api/admin/queries/${encodeURIComponent(id)}`)
+}
+
 /** GET /api/admin/dashboard */
-export async function adminDashboard(): Promise<DashboardData> {
-  return adminHttp<DashboardData>('/api/admin/dashboard')
+export async function adminDashboard(
+  days = 14,
+  linkId?: string,
+): Promise<DashboardData> {
+  const params = new URLSearchParams({ days: String(days) })
+  if (linkId) params.set('linkId', linkId)
+  return adminHttp<DashboardData>(`/api/admin/dashboard?${params}`)
 }

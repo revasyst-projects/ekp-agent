@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { adminLogin, isAdminAuthed } from '../../api/client'
 import { Card, Spinner } from '../../components/ui'
-import { Logo } from '../Home'
+import { Logo } from '../../components/ui'
 
 export default function AdminLogin() {
   const navigate = useNavigate()

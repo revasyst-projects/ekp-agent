@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Badge, Card } from '../components/ui'
+import { Badge, Card, Logo } from '../components/ui'
 
 /**
  * Root index — internal entry point. Prospects never land here: they arrive
@@ -49,15 +49,4 @@ export default function Home() {
   )
 }
 
-export function Logo({ className = 'size-9' }: { className?: string }) {
-  return (
-    <div
-      className={`flex items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-sky-600 font-bold text-white ${className}`}
-    >
-      <svg viewBox="0 0 24 24" fill="none" className="size-5" stroke="currentColor" strokeWidth="2">
-        <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" strokeLinejoin="round" />
-        <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" strokeLinejoin="round" />
-      </svg>
-    </div>
-  )
-}
+export { Logo }

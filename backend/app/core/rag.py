@@ -207,14 +207,19 @@ async def query_stream(
             """
             INSERT INTO query_log
                 (link_id, corpus, question, answer, grounded, retrieved_chunk_ids,
+                 retrieved_scores, kept_chunks,
                  retrieval_ms, ttft_ms, total_ms, input_tokens, output_tokens,
                  est_cost, model)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 link_id, corpus, question, answer, grounded,
-                [h.chunk_id for h in hits],
+                # every hit the search returned, closest first — the ones below
+                # the floor are what the admin drill-down shows as discarded
+                [r.chunk_id for r in rows],
+                [round(r.score, 4) for r in rows],
+                len(hits),
                 retrieval_ms, ttft_ms, total_ms,
                 usage.input_tokens, usage.output_tokens,
                 usage.est_cost_usd, llm.model if grounded else "",

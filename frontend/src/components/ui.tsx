@@ -9,23 +9,6 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
   )
 }
 
-export function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-      {children}
-    </h3>
-  )
-}
-
-/** Small labeled heading for a block within an answer (Sources, Metrics, …). */
-export function ResponseHeading({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-      {children}
-    </div>
-  )
-}
-
 type BadgeTone = 'slate' | 'green' | 'amber' | 'red' | 'indigo' | 'sky'
 
 const badgeTones: Record<BadgeTone, string> = {
@@ -37,23 +20,21 @@ const badgeTones: Record<BadgeTone, string> = {
   sky: 'bg-sky-50 text-sky-700 border-sky-200',
 }
 
-export function Badge({ tone = 'slate', children }: { tone?: BadgeTone; children: ReactNode }) {
+export function Badge({
+  tone = 'slate',
+  className = '',
+  children,
+}: {
+  tone?: BadgeTone
+  className?: string
+  children: ReactNode
+}) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${badgeTones[tone]}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${badgeTones[tone]} ${className}`}
     >
       {children}
     </span>
-  )
-}
-
-export function StatTile({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">{label}</div>
-      <div className="mt-0.5 font-mono text-base font-semibold text-slate-800">{value}</div>
-      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
-    </div>
   )
 }
 
@@ -98,22 +79,118 @@ export function CopyButton({ text }: { text: string }) {
   )
 }
 
-/** remaining/total budget meter, e.g. "queries 21 / 25" */
-export function BudgetMeter({ label, used, max }: { label: string; used: number; max: number }) {
-  const remaining = Math.max(0, max - used)
-  const pct = Math.min(100, (used / max) * 100)
-  const tone = remaining === 0 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+/**
+ * A detail that would clutter the line it belongs to: an ⓘ button whose
+ * tooltip carries it. Hover and keyboard focus both open it — the detail is
+ * never the only place a fact lives, so a touch device loses nothing.
+ */
+export function InfoTip({ title, children }: { title?: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="min-w-36">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11px] font-medium text-slate-500">{label}</span>
-        <span className="font-mono text-[11px] text-slate-600">
-          {remaining}<span className="text-slate-400">/{max} left</span>
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={title ?? 'More detail'}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((v) => !v)}
+        className="flex size-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5">
+          <path
+            fillRule="evenodd"
+            d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM9 8a1 1 0 0 1 2 0v5a1 1 0 1 1-2 0V8zm1-3.2a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute bottom-full left-1/2 z-20 mb-1.5 w-60 -translate-x-1/2 rounded-lg bg-slate-800 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-100 shadow-lg"
+        >
+          {title && <span className="mb-0.5 block font-semibold text-white">{title}</span>}
+          {children}
         </span>
-      </div>
-      <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
-      </div>
+      )}
+    </span>
+  )
+}
+
+/**
+ * A retrieval score as a percentage with its own explanation attached —
+ * a bare "0.84" means nothing to someone seeing the product for the first
+ * time.
+ */
+export function MatchScore({
+  score,
+  floor,
+  muted = false,
+}: {
+  score: number
+  floor?: number
+  muted?: boolean
+}) {
+  const pct = Math.round(score * 100)
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Badge tone={muted ? 'slate' : 'indigo'}>
+        <span className="font-mono">{pct}% match</span>
+      </Badge>
+      <InfoTip title="Match score">
+        How closely this passage matches your question, from 0 to 100%.
+        {floor !== undefined && (
+          <> Anything under {Math.round(floor * 100)}% is discarded rather than shown to the model.</>
+        )}
+      </InfoTip>
+    </span>
+  )
+}
+
+/** A labelled progress bar used for budgets and usage. */
+export function Meter({ pct, tone = 'indigo' }: { pct: number; tone?: 'indigo' | 'amber' | 'red' }) {
+  const bar = tone === 'red' ? 'bg-red-500' : tone === 'amber' ? 'bg-amber-500' : 'bg-indigo-500'
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+      <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, pct)}%` }} />
+    </div>
+  )
+}
+
+/** A compact headline figure for the analytics and link-detail pages. */
+export function Kpi({
+  label,
+  value,
+  sub,
+  tone = 'slate',
+}: {
+  label: string
+  value: ReactNode
+  sub?: ReactNode
+  tone?: 'slate' | 'green' | 'amber'
+}) {
+  const valueTone =
+    tone === 'green' ? 'text-emerald-600' : tone === 'amber' ? 'text-amber-700' : 'text-slate-900'
+  return (
+    <Card className="px-4 py-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className={`mt-0.5 font-mono text-2xl font-semibold ${valueTone}`}>{value}</div>
+      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
+    </Card>
+  )
+}
+
+export function Logo({ className = 'size-9' }: { className?: string }) {
+  return (
+    <div
+      className={`flex items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-sky-600 font-bold text-white ${className}`}
+    >
+      <svg viewBox="0 0 24 24" fill="none" className="size-5" stroke="currentColor" strokeWidth="2">
+        <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" strokeLinejoin="round" />
+        <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" strokeLinejoin="round" />
+      </svg>
     </div>
   )
 }

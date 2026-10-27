@@ -88,3 +88,38 @@ CREATE TABLE IF NOT EXISTS feedback (
     reason       text,
     ts           timestamptz NOT NULL DEFAULT now()
 );
+
+-- Every change to a link's access window, for the admin audit trail.
+-- kind: minted | extended | revoked | reinstated | requested | declined
+CREATE TABLE IF NOT EXISTS access_event (
+    id          bigserial PRIMARY KEY,
+    link_id     uuid NOT NULL REFERENCES proposal_link(id) ON DELETE CASCADE,
+    kind        text NOT NULL CHECK (kind IN
+                  ('minted', 'extended', 'revoked', 'reinstated', 'requested', 'declined')),
+    actor       text NOT NULL DEFAULT 'admin',   -- 'admin' | 'client'
+    note        text NOT NULL DEFAULT '',
+    expires_before timestamptz,
+    expires_after  timestamptz,
+    ts          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS access_event_link_idx ON access_event (link_id, ts DESC);
+
+-- A client asking, from the expired screen, for the window to be reopened.
+CREATE TABLE IF NOT EXISTS extension_request (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    link_id     uuid NOT NULL REFERENCES proposal_link(id) ON DELETE CASCADE,
+    hours       int  NOT NULL,
+    note        text NOT NULL DEFAULT '',
+    status      text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'granted', 'declined')),
+    ts          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS extension_request_pending_idx
+    ON extension_request (link_id) WHERE status = 'pending';
+
+-- Retrieval detail for the admin drill-down: every chunk the search returned
+-- (not only the ones that cleared the floor), its cosine score, and how many
+-- of the leading ones were actually sent to the model.
+ALTER TABLE query_log ADD COLUMN IF NOT EXISTS retrieved_scores
+    double precision[] NOT NULL DEFAULT '{}';
+ALTER TABLE query_log ADD COLUMN IF NOT EXISTS kept_chunks int NOT NULL DEFAULT 0;

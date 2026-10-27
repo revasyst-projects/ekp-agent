@@ -1,6 +1,6 @@
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { adminLogout, isAdminAuthed } from '../../api/client'
-import { Logo } from '../Home'
+import { Logo } from '../../components/ui'
 
 export default function AdminLayout() {
   const navigate = useNavigate()
@@ -27,7 +27,7 @@ export default function AdminLayout() {
             Proposal links
           </NavLink>
           <NavLink to="/admin/dashboard" className={tab}>
-            Dashboard
+            Analytics
           </NavLink>
         </nav>
         <button

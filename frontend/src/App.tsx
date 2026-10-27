@@ -7,6 +7,8 @@ import AdminLogin from './pages/admin/AdminLogin'
 import AdminLayout from './pages/admin/AdminLayout'
 import LinksPage from './pages/admin/LinksPage'
 import DashboardPage from './pages/admin/DashboardPage'
+import LinkDetailPage from './pages/admin/LinkDetailPage'
+import QueryDetailPage from './pages/admin/QueryDetailPage'
 
 export default function App() {
   return (
@@ -19,6 +21,8 @@ export default function App() {
       <Route element={<AdminLayout />}>
         <Route path="/admin/links" element={<LinksPage />} />
         <Route path="/admin/dashboard" element={<DashboardPage />} />
+        <Route path="/admin/links/:linkId" element={<LinkDetailPage />} />
+        <Route path="/admin/queries/:queryId" element={<QueryDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

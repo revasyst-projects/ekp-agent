@@ -21,6 +21,11 @@ ALGO = "HS256"
 
 ADMIN_TOKEN_TTL_HOURS = 12
 
+# The one rail left on an access window. The old 72-hour ceiling is gone: a
+# link may be minted for, or extended to, any point inside a year from now, so
+# a shared URL can never quietly become permanent.
+MAX_WINDOW_HOURS = 8760
+
 
 class LinkAuthError(Exception):
     """code: invalid | revoked | expired | budget"""
@@ -82,7 +87,90 @@ async def create_link(
         """,
         (label, max_ingestions, max_queries, expires_at),
     )
-    return await cur.fetchone()
+    link = await cur.fetchone()
+    await log_access_event(
+        conn,
+        link["id"],
+        "minted",
+        note=f"{expires_in_hours} h window",
+        expires_after=link["expires_at"],
+    )
+    return link
+
+
+async def extend_link(
+    conn,
+    link_id,
+    *,
+    expires_at: dt.datetime,
+    top_up_queries: int | None = None,
+    note: str = "",
+) -> dict | None:
+    """Move a link's expiry out (reviving an expired one) and optionally raise
+    its question cap. Returns the updated row, or None when the link is gone.
+
+    Extending never mints a new token, so a URL already shared with a client
+    keeps working — which is the whole point of the feature.
+    """
+    cur = await conn.execute(
+        "SELECT expires_at FROM proposal_link WHERE id = %s", (link_id,)
+    )
+    before = await cur.fetchone()
+    if before is None:
+        return None
+
+    cur = await conn.execute(
+        """
+        UPDATE proposal_link
+        SET expires_at  = %s,
+            max_queries = GREATEST(max_queries, COALESCE(%s, max_queries)),
+            revoked     = false
+        WHERE id = %s
+        RETURNING *
+        """,
+        (expires_at, top_up_queries, link_id),
+    )
+    link = await cur.fetchone()
+    await log_access_event(
+        conn,
+        link_id,
+        "extended",
+        note=note,
+        expires_before=before["expires_at"],
+        expires_after=expires_at,
+    )
+    return link
+
+
+async def log_access_event(
+    conn,
+    link_id,
+    kind: str,
+    *,
+    actor: str = "admin",
+    note: str = "",
+    expires_before: dt.datetime | None = None,
+    expires_after: dt.datetime | None = None,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO access_event
+            (link_id, kind, actor, note, expires_before, expires_after)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (link_id, kind, actor, note, expires_before, expires_after),
+    )
+
+
+async def list_access_events(conn, link_id) -> list[dict]:
+    cur = await conn.execute(
+        """
+        SELECT kind, actor, note, expires_before, expires_after, ts
+        FROM access_event WHERE link_id = %s ORDER BY ts DESC LIMIT 50
+        """,
+        (link_id,),
+    )
+    return await cur.fetchall()
 
 
 async def load_link_for_token(
@@ -133,6 +221,19 @@ async def revoke_link(conn, link_id: str) -> None:
     await conn.execute(
         "UPDATE proposal_link SET revoked = true WHERE id = %s", (link_id,)
     )
+    await log_access_event(conn, link_id, "revoked")
+
+
+async def reinstate_link(conn, link_id: str) -> dict | None:
+    """Undo a revoke without touching the expiry window."""
+    cur = await conn.execute(
+        "UPDATE proposal_link SET revoked = false WHERE id = %s RETURNING *",
+        (link_id,),
+    )
+    link = await cur.fetchone()
+    if link is not None:
+        await log_access_event(conn, link_id, "reinstated")
+    return link
 
 
 async def list_links(conn) -> list[dict]:

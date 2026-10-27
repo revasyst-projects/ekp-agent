@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react'
 import { ingest } from '../../api/client'
 import type { DocIngestStats, IngestAggregate, IngestStage } from '../../api/types'
-import { StageFlow, type StageState } from '../../components/StageFlow'
-import { Badge, Card, SectionTitle, StatTile } from '../../components/ui'
+import { Badge } from '../../components/ui'
 import { fmtBytes, fmtMs, fmtNum } from '../../utils/format'
+import { FileTag } from './Workspace'
 
 const ACCEPTED = ['pdf', 'txt', 'md', 'docx']
 const MAX_FILES = 5
@@ -18,21 +18,30 @@ const PIPELINE: { key: IngestStage; label: string }[] = [
   { key: 'index', label: 'Index' },
 ]
 
+type StageStatus = 'pending' | 'active' | 'done'
+
 interface LiveDoc {
   docId: string
   filename: string
   sizeBytes: number
-  stages: Partial<Record<IngestStage, StageState>>
+  stages: Partial<Record<IngestStage, { status: StageStatus; durationMs?: number }>>
   stats?: DocIngestStats
 }
 
 interface Props {
   token: string
-  docs: DocIngestStats[] // previously ingested this session
+  docs: DocIngestStats[]
   onIngested: (docs: DocIngestStats[]) => void
+  /** only offered once there is already something to go back to */
+  onDismiss?: () => void
 }
 
-export default function IngestPanel({ token, docs, onIngested }: Props) {
+/**
+ * Upload and the live pipeline. The five stages are a thin rail per document
+ * rather than five bordered cards: at a glance you want "which stage, how
+ * long", and the counts belong to the finished document.
+ */
+export default function IngestPanel({ token, docs, onIngested, onDismiss }: Props) {
   const [selected, setSelected] = useState<File[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const [running, setRunning] = useState(false)
@@ -42,6 +51,8 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const selectedBytes = selected.reduce((s, f) => s + f.size, 0)
+  const slotsLeft = MAX_FILES - docs.length - selected.length
+  const bytesLeft = MAX_TOTAL_BYTES - selectedBytes
 
   function addFiles(files: File[]) {
     const errs: string[] = []
@@ -50,13 +61,15 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
     for (const f of files) {
       const ext = f.name.split('.').pop()?.toLowerCase() ?? ''
       if (!ACCEPTED.includes(ext)) {
-        errs.push(`${f.name}: unsupported format (accepted: ${ACCEPTED.join(', ')})`)
+        errs.push(
+          `${f.name} was not added — ${ext ? `.${ext} files` : 'that format'} are not parsed yet. Accepted: ${ACCEPTED.join(', ')}.`,
+        )
       } else if (accepted.some((s) => s.name === f.name)) {
-        errs.push(`${f.name}: already added`)
-      } else if (accepted.length >= MAX_FILES) {
-        errs.push(`Up to ${MAX_FILES} files per upload — "${f.name}" was skipped`)
+        errs.push(`${f.name} is already in the list.`)
+      } else if (docs.length + accepted.length >= MAX_FILES) {
+        errs.push(`${f.name} was skipped — this link allows ${MAX_FILES} documents in total.`)
       } else if (total + f.size > MAX_TOTAL_BYTES) {
-        errs.push(`${f.name}: would exceed the ${MAX_TOTAL_MB} MB combined limit for this upload`)
+        errs.push(`${f.name} would push the upload past the ${MAX_TOTAL_MB} MB limit.`)
       } else {
         accepted.push(f)
         total += f.size
@@ -79,9 +92,7 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
       switch (e.type) {
         case 'error':
           setErrors((prev) => [...prev, e.message])
-          if (e.docId) {
-            setLiveDocs((prev) => prev.filter((d) => d.docId !== e.docId || d.stats))
-          }
+          if (e.docId) setLiveDocs((prev) => prev.filter((d) => d.docId !== e.docId || d.stats))
           break
         case 'doc-start':
           setLiveDocs((prev) => [
@@ -99,8 +110,8 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
                       ...d.stages,
                       [e.stage]:
                         e.status === 'started'
-                          ? { status: 'active' }
-                          : { status: 'done', durationMs: e.durationMs, metrics: e.metrics },
+                          ? { status: 'active' as const }
+                          : { status: 'done' as const, durationMs: e.durationMs },
                     },
                   }
                 : d,
@@ -121,15 +132,25 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
     onIngested(finished)
   }
 
-  const canAdd = !running && selected.length < MAX_FILES && selectedBytes < MAX_TOTAL_BYTES
-  const filePct = Math.min(100, (selected.length / MAX_FILES) * 100)
-  const bytePct = Math.min(100, (selectedBytes / MAX_TOTAL_BYTES) * 100)
+  const canAdd = !running && slotsLeft > 0 && bytesLeft > 0
 
   return (
-    <Card className="p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SectionTitle>Document ingestion</SectionTitle>
-        <Badge tone="slate">pdf · txt · md · docx</Badge>
+    <div className="mx-auto max-w-[54rem]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-medium text-slate-900">Add documents</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            pdf, txt, md, docx · up to {MAX_FILES} documents and {MAX_TOTAL_MB} MB per upload
+          </p>
+        </div>
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+          >
+            Done — back to asking
+          </button>
+        )}
       </div>
 
       {/* dropzone */}
@@ -145,11 +166,11 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
           if (canAdd) addFiles(Array.from(e.dataTransfer.files))
         }}
         onClick={() => canAdd && inputRef.current?.click()}
-        className={`mt-3 cursor-pointer rounded-lg border-2 border-dashed px-4 py-7 text-center transition ${
+        className={`mt-4 rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
           dragOver
-            ? 'border-indigo-400 bg-indigo-50'
+            ? 'border-indigo-400 bg-indigo-100'
             : canAdd
-              ? 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
+              ? 'cursor-pointer border-indigo-200 bg-indigo-50 hover:border-indigo-400'
               : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70'
         }`}
       >
@@ -164,151 +185,176 @@ export default function IngestPanel({ token, docs, onIngested }: Props) {
             e.target.value = ''
           }}
         />
-        <p className="text-sm text-slate-700">
-          {canAdd ? (
-            <>Drop files here or <span className="font-medium text-indigo-600">browse</span></>
-          ) : selected.length >= MAX_FILES ? (
-            `Maximum ${MAX_FILES} files per upload reached`
-          ) : (
-            `${MAX_TOTAL_MB} MB combined limit reached`
-          )}
+        <UploadIcon />
+        <p className="mt-2 font-medium text-slate-900">
+          {canAdd ? 'Drop files here' : slotsLeft <= 0 ? 'Document limit reached' : 'Size limit reached'}
         </p>
-        <p className="mt-1 text-xs text-slate-500">
-          Up to {MAX_FILES} files · {MAX_TOTAL_MB} MB total per upload · processed on-platform, never
-          sent to an external API
+        <p className="mt-0.5 text-sm text-slate-600">
+          {canAdd
+            ? `or pick them from your computer — ${slotsLeft} file${slotsLeft === 1 ? '' : 's'} and ${fmtBytes(bytesLeft)} still allowed`
+            : 'Remove a file to make room, or ask about what is already indexed.'}
         </p>
+        {canAdd && (
+          <span className="mt-4 inline-block rounded-full bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
+            Browse files
+          </span>
+        )}
       </div>
 
-      {/* per-upload usage against the 5-file / 25 MB limits */}
-      {selected.length > 0 && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <UsageBar
-            label="Files"
-            valueText={`${selected.length} / ${MAX_FILES}`}
-            pct={filePct}
-          />
-          <UsageBar
-            label="Combined size"
-            valueText={`${fmtBytes(selectedBytes)} / ${MAX_TOTAL_MB} MB`}
-            pct={bytePct}
-          />
-        </div>
-      )}
-
       {errors.length > 0 && (
-        <ul className="mt-3 space-y-1 text-xs text-red-600">
+        <ul className="mt-3 space-y-2">
           {errors.map((e, i) => (
-            <li key={i}>• {e}</li>
+            <li
+              key={i}
+              className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs leading-relaxed text-red-700"
+            >
+              {e}
+            </li>
           ))}
         </ul>
       )}
 
       {selected.length > 0 && (
-        <div className="mt-3 space-y-2">
+        <div className="mt-4 space-y-2">
           {selected.map((f) => (
             <div
               key={f.name}
-              className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+              className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
             >
-              <span className="truncate text-slate-700">{f.name}</span>
-              <span className="ml-3 flex shrink-0 items-center gap-3">
-                <span className="font-mono text-xs text-slate-500">{fmtBytes(f.size)}</span>
-                <button
-                  onClick={() => setSelected((prev) => prev.filter((x) => x.name !== f.name))}
-                  className="text-slate-400 hover:text-red-500"
-                  aria-label={`Remove ${f.name}`}
-                >
-                  ✕
-                </button>
-              </span>
+              <FileTag filename={f.name} />
+              <span className="min-w-0 flex-1 truncate text-slate-800">{f.name}</span>
+              <span className="font-mono text-xs text-slate-400">{fmtBytes(f.size)}</span>
+              <button
+                onClick={() => setSelected((prev) => prev.filter((x) => x.name !== f.name))}
+                className="text-slate-400 transition hover:text-red-500"
+                aria-label={`Remove ${f.name}`}
+              >
+                ✕
+              </button>
             </div>
           ))}
           <button
             onClick={runIngest}
-            className="mt-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
+            disabled={running}
+            className="rounded-full bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
             Ingest {selected.length} document{selected.length === 1 ? '' : 's'}
           </button>
         </div>
       )}
 
-      {/* live pipeline per document */}
       {liveDocs.length > 0 && (
         <div className="mt-5 space-y-3">
           {liveDocs.map((d) => (
-            <div key={d.docId} className="fade-up rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-medium text-slate-800">{d.filename}</span>
-                  <span className="font-mono text-xs text-slate-500">{fmtBytes(d.sizeBytes)}</span>
-                </div>
-                {d.stats ? (
-                  <Badge tone="green">indexed in {fmtMs(d.stats.totalMs)}</Badge>
-                ) : (
-                  <Badge tone="indigo">processing…</Badge>
-                )}
-              </div>
-              <div className="mt-3">
-                <StageFlow stages={PIPELINE} state={d.stages} />
-              </div>
-              {d.stats && (
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <StatTile label="Chunks" value={fmtNum(d.stats.chunkCount)} />
-                  <StatTile label="Tokens" value={fmtNum(d.stats.tokenCount)} />
-                  <StatTile
-                    label="Embeddings"
-                    value={fmtNum(d.stats.embeddingCount)}
-                    sub={`${d.stats.vectorDim}-dim`}
-                  />
-                  <StatTile
-                    label="Words"
-                    value={fmtNum(d.stats.wordCount)}
-                    sub={d.stats.pageCount ? `${d.stats.pageCount} pages` : undefined}
-                  />
-                </div>
-              )}
-            </div>
+            <DocProgress key={d.docId} doc={d} />
           ))}
         </div>
       )}
 
-      {/* aggregate */}
       {aggregate && (
-        <div className="fade-up mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3.5">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-emerald-700">
-            <span className="font-semibold">Corpus ready — ask your first question below.</span>
-            <span className="font-mono text-emerald-600">
-              {aggregate.documents} docs · {fmtNum(aggregate.chunks)} chunks · {fmtNum(aggregate.tokens)}{' '}
-              tokens · {fmtNum(aggregate.embeddings)} embeddings · {fmtMs(aggregate.totalMs)} total
-            </span>
-          </div>
-          <div className="mt-1 text-[11px] text-emerald-600/80">
-            Embedded with BAAI/bge-small-en-v1.5 (onnx-int8) on local CPU — no external embedding API.
-          </div>
+        <div className="fade-up mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-medium text-emerald-800">
+            {aggregate.documents} document{aggregate.documents === 1 ? '' : 's'} searchable now.
+          </p>
+          <p className="mt-1.5 font-mono text-[11px] text-emerald-700">
+            {fmtNum(aggregate.chunks)} chunks · {fmtNum(aggregate.tokens)} tokens ·{' '}
+            {fmtNum(aggregate.embeddings)} embeddings · {fmtMs(aggregate.totalMs)} total ·
+            bge-small-en-v1.5 (onnx-int8) on local CPU
+          </p>
         </div>
       )}
-
-      {docs.length === 0 && liveDocs.length === 0 && (
-        <p className="mt-3 text-xs text-slate-500">
-          Your documents are indexed into an isolated namespace tied to this link — no other
-          workspace can ever see them.
-        </p>
-      )}
-    </Card>
+    </div>
   )
 }
 
-function UsageBar({ label, valueText, pct }: { label: string; valueText: string; pct: number }) {
-  const tone = pct >= 100 ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-indigo-500'
+function DocProgress({ doc }: { doc: LiveDoc }) {
+  const activeStage = PIPELINE.find((p) => doc.stages[p.key]?.status === 'active')
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-slate-500">{label}</span>
-        <span className="font-mono text-[11px] text-slate-600">{valueText}</span>
+    <article className="fade-up rounded-xl border border-slate-200 bg-white px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <FileTag filename={doc.filename} />
+          <span className="truncate text-sm font-medium text-slate-800">{doc.filename}</span>
+          <span className="font-mono text-xs text-slate-400">{fmtBytes(doc.sizeBytes)}</span>
+        </div>
+        {doc.stats ? (
+          <Badge tone="green">indexed in {fmtMs(doc.stats.totalMs)}</Badge>
+        ) : (
+          <Badge tone="indigo">{activeStage ? activeStage.label.toLowerCase() : 'starting'}…</Badge>
+        )}
       </div>
-      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-200">
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+
+      <div className="mt-3.5 grid grid-cols-5 gap-2">
+        {PIPELINE.map((p) => {
+          const s = doc.stages[p.key]
+          const status = s?.status ?? 'pending'
+          return (
+            <div key={p.key}>
+              <div
+                className={`h-1.5 rounded-full ${
+                  status === 'done'
+                    ? 'bg-indigo-500'
+                    : status === 'active'
+                      ? 'animate-pulse bg-indigo-500'
+                      : 'bg-slate-200'
+                }`}
+              />
+              <div
+                className={`mt-1.5 text-xs ${
+                  status === 'pending' ? 'text-slate-400' : 'text-slate-600'
+                }`}
+              >
+                {p.label}
+              </div>
+              <div className="font-mono text-[11px] text-slate-400">
+                {s?.durationMs !== undefined ? fmtMs(s.durationMs) : '—'}
+              </div>
+            </div>
+          )
+        })}
       </div>
+
+      {doc.stats && (
+        <dl className="mt-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <Stat label="Chunks" value={fmtNum(doc.stats.chunkCount)} />
+          <Stat label="Tokens" value={fmtNum(doc.stats.tokenCount)} />
+          <Stat label="Vectors" value={`${fmtNum(doc.stats.embeddingCount)} × ${doc.stats.vectorDim}`} />
+          <Stat
+            label="Words"
+            value={fmtNum(doc.stats.wordCount)}
+            sub={doc.stats.pageCount ? `${doc.stats.pageCount} pages` : undefined}
+          />
+        </dl>
+      )}
+    </article>
+  )
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-3 py-2.5">
+      <dt className="text-xs text-slate-500">{label}</dt>
+      <dd className="font-mono text-sm font-medium text-slate-800">{value}</dd>
+      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
     </div>
+  )
+}
+
+function UploadIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      className="mx-auto size-9 text-indigo-600"
+    >
+      <path
+        d="M12 16V5m0 0L8 9m4-4l4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }

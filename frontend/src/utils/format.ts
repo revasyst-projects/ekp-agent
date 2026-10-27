@@ -44,3 +44,35 @@ export function expiryText(iso: string): { text: string; expired: boolean } {
     ? { text: `expires in ${span}`, expired: false }
     : { text: `expired ${span} ago`, expired: true }
 }
+
+/** "Mon 2 Nov, 17:00" — the absolute instant an access window closes. */
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** "2 Nov" — for chart axes and compact rows. */
+export function fmtDay(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
+export function fmtPct(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`
+}
+
+/** How a link's window reads right now, with the tone the UI should use. */
+export function expiryStatus(
+  iso: string,
+  revoked: boolean,
+): { text: string; tone: 'green' | 'amber' | 'red' | 'slate'; expired: boolean } {
+  if (revoked) return { text: 'revoked', tone: 'slate', expired: true }
+  const { text, expired } = expiryText(iso)
+  if (expired) return { text, tone: 'red', expired }
+  const hoursLeft = (Date.parse(iso) - Date.now()) / 3_600_000
+  return { text, tone: hoursLeft < 24 ? 'amber' : 'green', expired }
+}
